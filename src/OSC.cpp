@@ -5,54 +5,103 @@
  *      Author: nemo
  */
 
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <string.h>
+#include <unistd.h>
+
+#include <stdio.h>
+
 #include "OSC.h"
-#include "unistd.h"
+
 
 OSC::OSC(int port, char *addr) {
 
-	this->peer.sin_family = AF_INET;
-	this->peer.sin_port = htons(port);
-	this->peer.sin_addr.s_addr = inet_addr(addr);
-	this->sOSC = socket(AF_INET, SOCK_DGRAM, 0);
+	   memset(&this->server_addr, 0, sizeof(this->server_addr));
+	   this->server_addr.sin_family = AF_INET;
+	   this->server_addr.sin_addr.s_addr=inet_addr(addr);
+	   this->server_addr.sin_port=htons(port);
+	   this->sOSC = socket(AF_INET, SOCK_STREAM, 0);
+
+	   this->send_counter = 0;
+	   this->frame_initialized = 0;
+	   this->frame.header.framenumber = 0;
+	   this->frame.header.framesize = 0;
+	   this->frame.header.frametype = 0;
+
 }
 
 OSC::~OSC() {
 }
 
-void OSC :: send(void *buf, int size, int size_t, int type){
-	int bytes_to_send;
+void OSC :: send(){
+	char res[3];
+
+	int *a;
+	int err;
+
+	a = (int *)&this->frame;
+
+	if(this->isFrameUninitialized()) return;
+
+	this->frame.header.framenumber = this->send_counter++;
+
+	this->sOSC = socket(AF_INET, SOCK_STREAM, 0);
+	connect(this->sOSC, (struct sockaddr *)&this->server_addr, sizeof(this->server_addr));
+	sendto(this->sOSC, &this->frame, sizeof(this->frame.header) + this->frame.header.framesize, 0, (struct sockaddr *)&this->server_addr, sizeof(this->server_addr));
+	recv(this->sOSC, res, 2, MSG_WAITALL);
+	close(this->sOSC);
+
+	this->setFrameUninitialized();
+
+	this->send_counter++;
+}
+
+void OSC :: setFrame(float *data, int size, int type, int numgraphs){
 	int i;
 
-	char *src;
+	this->frame.header.frametype = type*256*256*256 + numgraphs*256*256;
+	this->frame.header.framesize = size;
 
-	src = (char *)buf;
-
-	bytes_to_send = size * size_t;
-
-	this->pack.full_length = bytes_to_send;
-	this->pack.packet_length = BODY_SIZE;
-	this->pack.type = type;
-	this->pack.num_packets = 0;
-	this->pack.unit_size = size_t;
-
-	i=0;
-	while(bytes_to_send >= BODY_SIZE){
-		this->pack.num_packet = i;
-
-		memset(this->pack.body, 0, sizeof(this->pack.body));
-		memcpy(&this->pack.body, &src[i*BODY_SIZE], BODY_SIZE);
-		sendto(sOSC, &this->pack, sizeof(this->pack), 0, (struct sockaddr *)&this->peer, sizeof this->peer);
-
-		bytes_to_send -= BODY_SIZE;
-		i++;
+	for(i=0; i<size/4; i++){
+		this->frame.body.f[i] = data[i];
 	}
 
-	if(bytes_to_send != 0){
-		this->pack.num_packet = i;
+	this->setFrameInitialized();
+}
 
-		memcpy(&this->pack.body, &src[i*BODY_SIZE], bytes_to_send);
-		sendto(sOSC, &this->pack, sizeof(this->pack), 0, (struct sockaddr *)&this->peer, sizeof this->peer);
+void OSC :: setFrame(int *data, int size, int type, int numgraphs){
 
-	}
+	this->frame.header.frametype = type*256*256*256 + numgraphs*256*256;
+	this->frame.header.framesize = size;
 
+	printf("2 %d\n", size);
+	memcpy(&this->frame.body, data, size);
+
+	this->setFrameInitialized();
+}
+
+void OSC :: setFrame(unsigned int *data, int size, int type, int numgraphs){
+
+	this->frame.header.frametype = type*256*256*256 + numgraphs*256*256;
+	this->frame.header.framesize = size;
+
+	printf("3 %d\n", size);
+	memcpy(&this->frame.body, data, size);
+
+	this->setFrameInitialized();
+}
+
+
+void OSC :: setFrameInitialized(){
+	this->frame_initialized = 1;
+}
+
+void OSC :: setFrameUninitialized(){
+	this->frame_initialized = 0;
+}
+
+int OSC :: isFrameUninitialized(){
+	return (1 - this->frame_initialized);
 }
