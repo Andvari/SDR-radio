@@ -13,6 +13,8 @@
 #include "arpa/inet.h"
 #include "string.h"
 
+#include "BUFFER.h"
+
 #define	SIZE	(65536+12)
 
 #define	I32	0
@@ -47,23 +49,14 @@ public:
 	OSC(int, char *);
 	virtual ~OSC();
 
-	void send();
-	void setFrame(float *, int, int, int);
-	void setFrame(int *, int, int, int);
-	void setFrame(unsigned int *, int, int, int);
-
-	void setFrameInitialized();
-	void setFrameUninitialized();
-
-	int isFrameUninitialized();
+	void send(BUFFER *, int, int);
 
 private:
 	int sOSC;
 	struct sockaddr_in server_addr;
 	FRAME frame;
-
 	int send_counter;
-	int frame_initialized;
+	int t;
 };
 
 #endif /* OSC_H_ */

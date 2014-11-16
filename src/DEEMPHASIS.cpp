@@ -7,24 +7,38 @@
 
 #include "DEEMPHASIS.h"
 
-DEEMPHASIS::DEEMPHASIS(int fs, int R, double C) {
-	this->Ts = 1./fs;
+DEEMPHASIS::DEEMPHASIS(int R, double C) {
 	this->tau = R*C;
+	this->y[0] = 0;
+	this->y[1] = 0;
 }
 
-DEEMPHASIS::DEEMPHASIS(int fs, double tau) {
-	this->Ts = 1./fs;
+DEEMPHASIS::DEEMPHASIS(double tau) {
 	this->tau = tau;
+	this->y[0] = 0;
+	this->y[1] = 0;
 }
 
 DEEMPHASIS::~DEEMPHASIS() {
 }
 
-void DEEMPHASIS :: make(fftwf_complex *b, int size){
-		double a = this->Ts / (this->tau + this->Ts);
+void DEEMPHASIS :: make(BUFFER *buf){
+	double Ts;
+	double a;
 
-	b[0][0]  = a * b[0][0] + (1-a)*this->y[0];
-	b[0][1]  = a * b[0][1] + (1-a)*this->y[1];
+	Ts = 1./buf->getFs();
+
+	a = Ts / (this->tau + Ts);
+	fftwf_complex *b;
+	int size;
+
+	b = buf->getB();
+	size = buf->getSize();
+
+
+
+	b[0][0]  = a * b[0][0] + (1-a) * this->y[0];
+	b[0][1]  = a * b[0][1] + (1-a) * this->y[1];
 
 	for(int i=1; i<size; i++){
 		b[i][0]  = b[i-1][0] + a * (b[i][0] - b[i-1][0]);
