@@ -25,27 +25,38 @@ OSC::OSC(int port, char *addr) {
 	   this->sOSC = socket(AF_INET, SOCK_STREAM, 0);
 
 	   this->send_counter = 0;
-	   this->frame_initialized = 0;
 	   this->frame.header.framenumber = 0;
 	   this->frame.header.framesize = 0;
 	   this->frame.header.frametype = 0;
 
+	   this->t=0;
 }
 
 OSC::~OSC() {
 }
 
-void OSC :: send(){
+void OSC :: send(BUFFER *b, int type, int numgraphs){
 	char res[3];
+	int i;
+	int size;
+	float *data;
 
-	int *a;
-	int err;
+	if(this->t > 0){
+		t--;
+		return;
+	}
+	t = 3;
 
-	a = (int *)&this->frame;
-
-	if(this->isFrameUninitialized()) return;
+	data = (float *)b->getB();
+	size = b->getSize();
 
 	this->frame.header.framenumber = this->send_counter++;
+	this->frame.header.frametype = type*256*256*256 + numgraphs*256*256;
+	this->frame.header.framesize = size*8;
+
+	for(i=0; i<size*2; i++){
+		this->frame.body.f[i] = data[i];
+	}
 
 	this->sOSC = socket(AF_INET, SOCK_STREAM, 0);
 	connect(this->sOSC, (struct sockaddr *)&this->server_addr, sizeof(this->server_addr));
@@ -53,55 +64,6 @@ void OSC :: send(){
 	recv(this->sOSC, res, 2, MSG_WAITALL);
 	close(this->sOSC);
 
-	this->setFrameUninitialized();
-
 	this->send_counter++;
 }
 
-void OSC :: setFrame(float *data, int size, int type, int numgraphs){
-	int i;
-
-	this->frame.header.frametype = type*256*256*256 + numgraphs*256*256;
-	this->frame.header.framesize = size;
-
-	for(i=0; i<size/4; i++){
-		this->frame.body.f[i] = data[i];
-	}
-
-	this->setFrameInitialized();
-}
-
-void OSC :: setFrame(int *data, int size, int type, int numgraphs){
-
-	this->frame.header.frametype = type*256*256*256 + numgraphs*256*256;
-	this->frame.header.framesize = size;
-
-	printf("2 %d\n", size);
-	memcpy(&this->frame.body, data, size);
-
-	this->setFrameInitialized();
-}
-
-void OSC :: setFrame(unsigned int *data, int size, int type, int numgraphs){
-
-	this->frame.header.frametype = type*256*256*256 + numgraphs*256*256;
-	this->frame.header.framesize = size;
-
-	printf("3 %d\n", size);
-	memcpy(&this->frame.body, data, size);
-
-	this->setFrameInitialized();
-}
-
-
-void OSC :: setFrameInitialized(){
-	this->frame_initialized = 1;
-}
-
-void OSC :: setFrameUninitialized(){
-	this->frame_initialized = 0;
-}
-
-int OSC :: isFrameUninitialized(){
-	return (1 - this->frame_initialized);
-}

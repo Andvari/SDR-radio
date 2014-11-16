@@ -10,31 +10,19 @@
 
 #include <math.h>
 #include "fftw3.h"
-#define	PI	3.14159265356
+#include "BUFFER.h"
+
 
 class PLL {
 public:
-	PLL(int, int, int, float, float, float);
+	PLL(int);
 	virtual ~PLL();
 
-	void make(fftwf_complex *, int);
+	void make(BUFFER *);
 private:
-	float  kd;
-	float  ko;
-	float  wp;
-	double zeta;
-
-	double  Fs;
-	double  Ts;
-
-	float  ki;
-	float  kp;
-
 	double t;
 	double Fget;
 	double p;
-	double v[2];
-	double e[2];
 };
 
 #endif /* PLL_H_ */

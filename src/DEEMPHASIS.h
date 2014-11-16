@@ -8,18 +8,18 @@
 #ifndef DEEMPHASIS_H_
 #define DEEMPHASIS_H_
 
+#include "BUFFER.h"
 #include "fftw3.h"
 
 class DEEMPHASIS {
 public:
-	DEEMPHASIS(int, int, double);
 	DEEMPHASIS(int, double);
+	DEEMPHASIS(double);
 	virtual ~DEEMPHASIS();
 
-	void make(fftwf_complex *, int);
+	void make(BUFFER *);
 
 private:
-	double	Ts;
 	double	tau;
 
 	fftwf_complex y;

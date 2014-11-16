@@ -6,29 +6,161 @@
  */
 
 #include "FILTER.h"
-#include "MARK.h"
 #include <math.h>
 #include <string.h>
 #include "fftw3.h"
+#include "stdio.h"
 
 #define	PI	3.14159265356
 
-FILTER::FILTER(int IR_lenght, int FR_lenght, int fsample, int type, int low, int high, int dec) {
+FILTER::FILTER(int IR_lenght, int type, int low, int high, int dec, int debug) {
+	this->IR_lenght = IR_lenght;
+	this->FR_lenght = -1;
+	this->Fs = -1;
+	this->Flow = low;
+	this->Fhigh = high;
+	this->dec = dec;
+	this->type = type;
+	this->debug = debug;
+}
+
+
+FILTER::~FILTER() {
+	fftwf_free(this->FR);
+	fftwf_free(this->mem);
+	fftwf_free(this->p);
+}
+
+void FILTER :: getFR(BUFFER *b){
+
+	if(b->getSize() < this->FR_lenght){
+		printf("getFr(): No enough space in BUFFER\n");
+		return;
+	}
+
+	for(int i=0; i<this->FR_lenght; i++){
+		b->getB()[i][0] = sqrt(this->FR[i][0]*this->FR[i][0] + this->FR[i][1]*this->FR[i][1]);
+		b->getB()[i][1] = atan2(this->FR[i][1], this->FR[i][0]);
+	}
+}
+
+void FILTER :: make(BUFFER *buf){
+	fftwf_complex *b;
 	fftwf_plan p;
 
-	this->IR_lenght = IR_lenght;
-	this->FR_lenght = FR_lenght;
-	this->fsample = fsample;
-	this->flow = low;
-	this->dec = dec;
-	this->FR = (fftwf_complex *)  fftwf_malloc(sizeof(fftwf_complex) * FR_lenght);
-	this->mem = (fftwf_complex *) fftwf_malloc(sizeof(fftwf_complex) * IR_lenght);
-	this->p   = (fftwf_complex *) fftwf_malloc(sizeof(fftwf_complex) * FR_lenght);
+	int newfr;
 
-	switch(type){
+	if(this->dec > 0){
+		newfr= (int)pow(2, 1+(int)log2(this->IR_lenght+buf->getSize()));
+	}
+	else{
+		newfr= (int)pow(2, 1+(int)log2(-this->dec*(this->IR_lenght+buf->getSize())));
+	}
+
+	int size;
+	double a[2];
+	double norm;
+
+	if(buf->getFs()   != this->Fs) this->updateFR(buf);
+	if(newfr != this->FR_lenght) this->updateFR(buf);
+
+	b = buf->getB();
+	size = buf->getSize();
+
+	memcpy(this->p, this->mem, this->IR_lenght*sizeof(fftwf_complex));
+	memcpy(&this->p[this->IR_lenght][0], b, size*sizeof(fftwf_complex));
+	memcpy(this->mem, &b[size-this->IR_lenght][0], this->IR_lenght*sizeof(fftwf_complex));
+	memset(&this->p[size + this->IR_lenght][0], 0, (this->FR_lenght-size-this->IR_lenght)*sizeof(fftwf_complex));
+
+	norm = 1. / sqrt(this->FR_lenght*this->IR_lenght);
+
+	if(this->dec < 0){
+		for(int i=this->IR_lenght + buf->getSize()-1; i>=0; i--){
+			this->p[i*-this->dec + 0][0] = this->p[i][0];
+			this->p[i*-this->dec + 0][1] = this->p[i][1];
+			this->p[i*-this->dec + 1][0] = 0 ;
+			this->p[i*-this->dec + 1][1] = 0 ;
+			this->p[i*-this->dec + 2][0] = 0 ;
+			this->p[i*-this->dec + 2][1] = 0 ;
+			this->p[i*-this->dec + 3][0] = 0 ;
+			this->p[i*-this->dec + 3][1] = 0 ;
+		}
+
+		buf->setFs(buf->getFs()*-this->dec);
+		buf->setSize(buf->getSize()*-this->dec);
+	}
+
+	p = fftwf_plan_dft_1d(this->FR_lenght, this->p, this->p, FFTW_FORWARD, FFTW_ESTIMATE);
+	fftwf_execute(p);
+
+	for(int i=0; i<this->FR_lenght; i++){
+		a[0] = this->p[i][0]*this->FR[i][0] - this->p[i][1]*this->FR[i][1];
+		a[1] = this->p[i][0]*this->FR[i][1] + this->p[i][1]*this->FR[i][0];
+		this->p[i][0] = a[0] * norm;
+		this->p[i][1] = a[1] * norm;
+	}
+
+	p = fftwf_plan_dft_1d(this->FR_lenght, this->p, this->p, FFTW_BACKWARD, FFTW_ESTIMATE);
+	fftwf_execute(p);
+
+	if(this->dec > 0){
+		buf->setFs(buf->getFs()/this->dec);
+		buf->setSize(buf->getSize()/this->dec);
+
+		for(int i=0, j=this->IR_lenght; i<buf->getSize(); i++, j+=this->dec){
+			b[i][0] = this->p[j][0] * norm ;
+			b[i][1] = this->p[j][1] * norm ;
+		}
+	}
+	else{
+		for(int i=0, j=this->IR_lenght; i<buf->getSize(); i++, j++){
+			b[i][0] = this->p[j][0] * norm ;
+			b[i][1] = this->p[j][1] * norm ;
+		}
+	}
+
+	fftwf_destroy_plan(p);
+
+	if(this->debug == 1){
+		FILE *f;
+
+		f = fopen("debug.txt", "w");
+		for(int i=0; i<buf->getSize(); i++){
+			fprintf(f, "%d %f %f \n", i, buf->getB()[i][0], buf->getB()[i][1]);
+		}
+		fclose(f);
+	}
+}
+
+void FILTER :: updateFR(BUFFER *b){
+	fftwf_plan p;
+
+	this->Fs = b->getFs();
+	if(this->dec > 0){
+		this->FR_lenght = (int)pow(2, 1+(int)log2(this->IR_lenght+b->getSize()));
+	}
+	else{
+		this->FR_lenght = (int)pow(2, 1+(int)log2(-this->dec*(this->IR_lenght+b->getSize())));
+	}
+
+	fftwf_free(this->FR);
+	fftwf_free(this->mem);
+	fftwf_free(this->p);
+
+	this->FR = (fftwf_complex *)  fftwf_malloc(sizeof(fftwf_complex) * this->FR_lenght);
+	this->mem = (fftwf_complex *) fftwf_malloc(sizeof(fftwf_complex) * this->IR_lenght);
+	this->p   = (fftwf_complex *) fftwf_malloc(sizeof(fftwf_complex) * this->FR_lenght);
+
+	memset(this->FR,	0,	this->FR_lenght*sizeof(fftwf_complex));
+	memset(this->mem,	0,	this->IR_lenght*sizeof(fftwf_complex));
+	memset(this->p,		0,	this->FR_lenght*sizeof(fftwf_complex));
+
+	if(this->debug == 1) printf("%d\n", this->FR_lenght);
+
+	switch(this->type){
 			case LOW_PASS:
-				for(int i=0; i<IR_lenght; i++){
-					if(((i*fsample / IR_lenght) > low)&&((i*fsample / IR_lenght )< (fsample - low))){
+				for(int i=0; i<this->IR_lenght; i++){
+					if(((i*this->Fs / this->IR_lenght) > this->Flow)&&((i*this->Fs / this->IR_lenght )< (this->Fs - this->Flow))){
 						this->FR[i][0] = 0;
 						this->FR[i][1] = 0;
 					}
@@ -46,7 +178,7 @@ FILTER::FILTER(int IR_lenght, int FR_lenght, int fsample, int type, int low, int
 				break;
 			case BANDPASS:
 				for(int i=0; i<IR_lenght; i++){
-					if(((i*fsample / IR_lenght) < low)||((i*fsample / IR_lenght ) > high)){
+					if(((i*this->Fs / this->IR_lenght) > this->Fhigh/2)&&((i*this->Fs/this->IR_lenght )< (this->Fs-this->Fhigh/2))){
 						this->FR[i][0] = 0;
 						this->FR[i][1] = 0;
 					}
@@ -77,75 +209,18 @@ FILTER::FILTER(int IR_lenght, int FR_lenght, int fsample, int type, int low, int
 		this->FR[i][1] = 0;
 	}
 
+	if(type == BANDPASS){
+		double ac, as;
+		for(int i=0; i<this->FR_lenght; i++){
+			ac = this->FR[i][0]*cos(2.*PI*this->Flow*i/this->Fs) - this->FR[i][1]*sin(2.*PI*sin(2.*PI*this->Flow*i/this->Fs));
+			as = this->FR[i][0]*sin(2.*PI*this->Flow*i/this->Fs) + this->FR[i][1]*cos(2.*PI*sin(2.*PI*this->Flow*i/this->Fs));
+			this->FR[i][0] = ac;
+			this->FR[i][1] = as;
+		}
+	}
+
 	p = fftwf_plan_dft_1d(FR_lenght, this->FR, this->FR, FFTW_FORWARD, FFTW_ESTIMATE);
 	fftwf_execute(p);
-	fftwf_destroy_plan(p);
-}
-
-
-FILTER::~FILTER() {
-	fftwf_free(this->FR);
-	fftwf_free(this->mem);
-	fftwf_free(this->p);
-}
-
-void FILTER :: getFR(fftwf_complex *fr){
-	for(int i=0; i<this->FR_lenght; i++){
-		fr[i][0] = sqrt(this->FR[i][0]*this->FR[i][0] + this->FR[i][1]*this->FR[i][1]);
-		fr[i][1] = atan2(this->FR[i][1], this->FR[i][0]);
-	}
-}
-
-void FILTER :: make(fftwf_complex *b, int size){
-	fftwf_plan p;
-	double a[2];
-
-	double norm;
-
-
-	memcpy(this->p, this->mem, this->IR_lenght*sizeof(fftwf_complex));
-	memcpy(&this->p[this->IR_lenght][0], b, size*sizeof(fftwf_complex));
-	memcpy(this->mem, &b[size-this->IR_lenght][0], this->IR_lenght*sizeof(fftwf_complex));
-	memset(&this->p[size + this->IR_lenght][0], 0, (this->FR_lenght-size-this->IR_lenght)*sizeof(fftwf_complex));
-
-/*
-	for(int i=0; i<this->IR_lenght; i++){
-		this->p[i][0] = this->mem[i][0];
-		this->p[i][1] = this->mem[i][1];
-		this->mem[i][0] = b[size-this->IR_lenght+i][0];
-		this->mem[i][1] = b[size-this->IR_lenght+i][1];
-	}
-
-	for(int i=0; i<size; i++){
-		this->p[this->IR_lenght + i][0] = b[i][0];
-		this->p[this->IR_lenght + i][1] = b[i][1];
-	}
-*/
-/*
-	for(int i=size+this->IR_lenght; i<this->FR_lenght; i++){
-		this->p[i][0] = 0;
-		this->p[i][1] = 0;
-	}
-*/
-	norm = 1. / sqrt(this->FR_lenght*this->IR_lenght);
-
-	p = fftwf_plan_dft_1d(this->FR_lenght, this->p, this->p, FFTW_FORWARD, FFTW_ESTIMATE);
-	fftwf_execute(p);
-
-	for(int i=0; i<this->FR_lenght; i++){
-		a[0] = this->p[i][0]*this->FR[i][0] - this->p[i][1]*this->FR[i][1];
-		a[1] = this->p[i][0]*this->FR[i][1] + this->p[i][1]*this->FR[i][0];
-		this->p[i][0] = a[0] * norm ;
-		this->p[i][1] = a[1] * norm ;
-	}
-
-	p = fftwf_plan_dft_1d(this->FR_lenght, this->p, this->p, FFTW_BACKWARD, FFTW_ESTIMATE);
-	fftwf_execute(p);
-
-	for(int i=0, j=this->IR_lenght; i<size; i++, j+=dec){
-		b[i][0] = this->p[j][0] * norm ;
-		b[i][1] = this->p[j][1] * norm ;
-	}
 	fftwf_destroy_plan(p);
 
 }
